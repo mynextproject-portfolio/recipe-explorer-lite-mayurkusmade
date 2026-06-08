@@ -30,7 +30,7 @@ def test_create_and_get_recipe(client, clean_storage, sample_recipe_data):
     """Contract test: Create recipe and verify response structure"""
     # Create recipe
     create_response = client.post("/api/recipes", json=sample_recipe_data)
-    assert create_response.status_code == 200
+    assert create_response.status_code == 201
     
     recipe = create_response.json()
     assert "id" in recipe
