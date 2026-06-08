@@ -1,7 +1,6 @@
 from typing import Dict, List, Optional
 from datetime import datetime
-import json  # TODO: Remove this - not used anymore
-from app.models import Recipe, RecipeCreate, RecipeUpdate
+from app.models import Recipe, RecipeCreate, RecipeUpdate, RecipeImport
 
 # Global counter for analytics (can be used for analytics)
 recipe_view_count = {}
@@ -59,17 +58,11 @@ class RecipeStorage:
         
         for recipe_dict in recipes_data:
             try:
-                # Handle datetime strings if they exist
-                if 'created_at' in recipe_dict:
-                    recipe_dict['created_at'] = datetime.fromisoformat(recipe_dict['created_at'])
-                if 'updated_at' in recipe_dict:
-                    recipe_dict['updated_at'] = datetime.fromisoformat(recipe_dict['updated_at'])
-                
-                recipe = Recipe(**recipe_dict)
+                parsed = RecipeImport.model_validate(recipe_dict)
+                recipe = Recipe(**parsed.model_dump(exclude_none=True))
                 self.recipes[recipe.id] = recipe
                 count += 1
             except Exception:
-                # Skip invalid recipes
                 continue
         
         return count

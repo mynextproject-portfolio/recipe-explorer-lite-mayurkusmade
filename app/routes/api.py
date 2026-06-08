@@ -1,26 +1,24 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
-from typing import List, Optional
+from typing import Optional
 import json
-from app.models import Recipe, RecipeCreate, RecipeUpdate
+from app.models import RecipeCreate, RecipeUpdate
 from app.services.storage import recipe_storage
 
 router = APIRouter(prefix="/api")
+
+MAX_IMPORT_FILE_SIZE = 1_000_000
 
 
 @router.get("/recipes")
 def get_recipes(search: Optional[str] = None):
     """Get all recipes or search by title"""
-    # TODO: Add pagination when we have more than 100 recipes
     if search:
         recipes = recipe_storage.search_recipes(search)
     else:
         recipes = recipe_storage.get_all_recipes()
-    
-    # Log for debugging (remove in production)
-    print(f"Returning {len(recipes)} recipes")
-    
+
     return {"recipes": recipes}
 
 
@@ -28,7 +26,6 @@ def get_recipes(search: Optional[str] = None):
 def export_recipes():
     """Export all recipes as JSON"""
     recipes = recipe_storage.get_all_recipes()
-    # Convert to dict for JSON serialization; jsonable_encoder handles datetimes
     recipes_dict = [recipe.model_dump() for recipe in recipes]
     return JSONResponse(content=jsonable_encoder(recipes_dict))
 
@@ -42,7 +39,7 @@ def get_recipe(recipe_id: str):
     return recipe
 
 
-@router.post("/recipes")
+@router.post("/recipes", status_code=201)
 def create_recipe(recipe: RecipeCreate):
     """Create a new recipe"""
     new_recipe = recipe_storage.create_recipe(recipe)
@@ -63,39 +60,58 @@ def delete_recipe(recipe_id: str):
     """Delete a recipe"""
     success = recipe_storage.delete_recipe(recipe_id)
     if not success:
-        return {"error": "Recipe not found", "status": "failed"}
-    return {"message": "Recipe deleted successfully", "status": "success"}  # Added status field inconsistently
+        raise HTTPException(status_code=404, detail="Recipe not found")
+    return {"message": "Recipe deleted successfully"}
 
 
 @router.post("/recipes/import")
 async def import_recipes(file: UploadFile = File(...)):
-    """Import recipes from JSON file - this method does too much"""
+    """Import recipes from JSON file"""
+    if not file.filename or not file.filename.lower().endswith(".json"):
+        raise HTTPException(
+            status_code=400,
+            detail="File must be a JSON file with a .json extension",
+        )
+
     try:
-        # Read file
         content = await file.read()
-        
-        # Check file size
-        if len(content) > 1000000:  # 1MB limit
-            return {"error": "File too large"}
-        
-        # Parse JSON
+
+        if len(content) > MAX_IMPORT_FILE_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail="File too large. Maximum allowed size is 1MB",
+            )
+
+        if not content.strip():
+            raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
         recipes_data = json.loads(content)
-        
-        # Validate it's a list
+
         if not isinstance(recipes_data, list):
-            raise HTTPException(status_code=400, detail="JSON must be an array of recipes")
-        
-        # Log the import (should use proper logging)
-        print(f"Importing {len(recipes_data)} recipes from {file.filename}")
-        
-        # Actually import
+            raise HTTPException(
+                status_code=400,
+                detail="JSON must be an array of recipes",
+            )
+
+        if len(recipes_data) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="JSON array must contain at least one recipe",
+            )
+
         count = recipe_storage.import_recipes(recipes_data)
-        
-        # Different success response format
+
+        if count == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="No valid recipes found in file. Check schema compliance",
+            )
+
         return {"message": f"Successfully imported {count} recipes", "count": count}
-    
-    except json.JSONDecodeError as e:
-        print(f"JSON error: {e}")
+
+    except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON format")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=f"Import failed: {str(error)}")
